@@ -171,9 +171,9 @@ Q) This is kind of lame compared to (Google|Yahoo) Desktop Search.  Why did
    you bother?
 
 A) Because:
-   1) Someone claimed I couldn't do it in a weekend, so of course I had to.
-      (that was version 1.0)
-   2) [GY]DS don't run on UNIX boxen.
+1. Someone claimed I couldn't do it in a weekend, so of course I had to.  
+   (that was version 1.0)
+2. [GY]DS don't run on UNIX boxen.
 
 Q) I have bags of money and want you to do some short-deadline demo-like project
    for me.  Who are you guys?
