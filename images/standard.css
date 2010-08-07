@@ -1,0 +1,120 @@
+a:link    { color: #0066cc; }
+a:visited { color: #cc6633; }
+a:active  { color: #e1c083; }
+a:hover   { text-decoration: underline overline; }
+
+body {
+  background: #ffffff;
+  color: #000000;
+  margin: 15px;
+}
+body, p, ul, ol, li, td, th, div, input, textarea, select {
+  font-family: verdana,geneva,arial,helvetica,sans-serif;
+}
+body, p, ul, ol, li, td, th, div, .text, input, textarea {
+  font-size: 9pt;
+}
+h1 {
+  font-size: 13.5pt;
+  font-weight: bold;
+  border-top: 1px solid #56684c;
+  background: #ced9b8;
+  padding: 2px 5px;
+}
+th {
+  text-align: left;
+}
+
+.small {
+  font-size: 7pt;
+}
+
+.footer {
+  color: #7f7f7f;
+  text-align: center;
+}
+
+.logo {
+  margin: 15px 0;
+}
+.medlogo {
+  margin-right: 20px;
+}
+.smlogo {
+  vertical-align: middle;
+}
+.icon {
+  margin-left: 10px;
+  margin-right: 5px;
+}
+
+.searchBar {
+  background: #ced9b8;
+  border-top: 1px solid #56684c;
+  border-bottom: 1px solid #56684c;
+  padding: 12px;
+  text-align: center;
+}
+
+.pgNum {
+  padding: 0 5px;
+  display: block;
+  float: left;
+}
+
+.resultInfo {
+  font-weight: normal;
+  white-space: nowrap;
+  margin-top: 3px;
+  float: right;
+}
+
+input, select, textarea {
+  background: #fff8e5;
+  border: 1px solid #56684c;
+}
+input, textarea {
+  padding-left: 3px;
+}
+.noinput {
+  background: transparent;
+  border: none;
+}
+
+.button, .smallbutton {
+  color: #ffffff;
+  background: #d09765;
+  font-weight: bold;
+  padding-left: 2px;
+  padding-right: 2px;
+  border: 1px solid #56684c;
+}
+.smallbutton {
+  font-size: 6pt;
+  letter-spacing: 1pt;
+  padding-left: 0px;
+  padding-right: 0px;
+}
+
+table.dump {
+  border-collapse: collapse;
+  font-family: verdana,geneva,arial,helvetica,sans-serif;
+}
+table.dump td, table.dump th {
+  border: 1px solid #56684c;
+  padding: 2px;
+  text-align: left;
+  vertical-align: top;
+}
+th.dumpHASH {
+  background: #afbd94;
+}
+th.dumpARRAY {
+  background: #e1c083;
+}
+
+.path {
+  color:     #007f00; 
+  font-size: 8pt;
+  word-wrap: break-word;
+}

@@ -1,0 +1,235 @@
+#!/usr/bin/perl -w
+
+BEGIN {
+  use File::Basename;
+  chdir(dirname($0));
+}
+
+use strict;
+use warnings;
+use Getopt::Std;
+use HTML::Parser;
+use DirectorySearch;
+use SWISH::Filter;
+use Data::Dumper;
+use File::Find;
+use MIME::Types;
+use LWP::UserAgent;
+use Parallel::ForkManager;
+
+my %opt;
+getopts('hvFp:n', \%opt);
+die <<EOF if $opt{h} || @ARGV;
+usage: $0 [-v] [-F] [-p procs] [-n]
+       -v: verbose
+       -F: force Full re-index
+       -p: number of parallel processes to fetch URLs with (default: 20)
+       -n: don't actually index, just print what would have been indexed
+EOF
+
+## verbose flag for swish-e
+my $v = $opt{v} ? 3 : 0;
+
+## default value for parallelism
+$opt{p} ||= 20;
+
+## can only do incremental if we have a full and its timestamp
+my $ts;
+$opt{F} = 1 unless 
+  -f 'index.full' && 
+  -f 'index.timestamp' &&
+  max(modTime($0, 'baagle.conf', 'swish-e.conf')) 
+    < ($ts = modTime('index.timestamp'));
+
+## renice
+system("renice -n 20 $$ 2>/dev/null");
+
+## prep filter
+my $filter = new SWISH::Filter;
+
+## setup command line
+my @swish = ($::CONFIG{SWISH_E}, '-c', 'swish-e.conf', '-v', $v, '-S', 'prog');
+
+## if full-reindex
+if ($opt{F}) {
+  ## save old mod time
+  my $old = modTime('index.full') || 0;
+
+  ## nuke the timestamp; we're ignoring it
+  $ts = 0;
+
+  ## save start time and run index
+  touch('tmp/index.timestamp');
+  doIndex(@swish, '-f', 'index.full');
+
+  ## only mark as done if full index was successfully updated
+  if (((stat('index.full'))[9] || 0) > $old) {
+    unlink('index.incr', 'index.incr.prop');
+    rename('tmp/index.timestamp', 'index.timestamp');
+  }
+} else {
+  doIndex(@swish, '-N', 'index.timestamp', '-f', 'index.incr');
+}
+
+## clean out old files
+unlink(<tmp/*>, <*.temp>);
+
+###############################################################################
+
+sub doIndex {
+  my $swish_fh;
+  open($swish_fh, '|-', @_) unless $opt{n};
+
+  indexWebHistory($ts, $swish_fh) 
+    if $::CONFIG{WEB_HISTORY} && -f $::CONFIG{WEB_HISTORY};
+
+  indexDirs($ts, $swish_fh)
+    if $::CONFIG{SEARCH_DIRS} && @{$::CONFIG{SEARCH_DIRS}};
+
+  close($swish_fh) unless $opt{n};
+}
+
+sub emitDoc {
+  my (%emit) = @_;
+
+  my $mtime = delete $emit{mtime} || '';
+  my $fh    = delete($emit{fh}) || \*STDOUT;
+
+  my $name  = $emit{name} || $emit{document} || '';
+
+  #debug($name);
+  my $doc   = $filter->convert(%emit);
+
+  return if !$doc || $doc->is_binary;
+
+  my $type = $doc->swish_parser_type || return;
+
+  #debug('\_ filtered') if $doc->was_filtered;
+  #debug('\_ ', $doc->content_type);
+
+  my $ref  = $doc->fetch_doc;
+  my $len  = length($$ref);
+
+  print $fh (<<EOF);
+Path-Name: $name
+Content-Length: $len
+Last-Mtime: $mtime
+Document-Type: $type
+
+EOF
+  print $fh ($$ref);
+}
+
+sub indexWebHistory {
+  my ($ts, $fh) = @_;
+
+  my $start = time();
+
+  open(my $f, '<', $::CONFIG{WEB_HISTORY});
+  my $dat = join('', <$f>);
+  close($f);
+  $dat =~ s/\\\n//g;
+
+  ## stupidest...file format...ever
+  ## http://www.livejournal.com/users/jwz/312657.html
+  my @urls;
+  while ($dat =~ m#=\s*(http://([^/]+)[^)]*)\)\s*\([A-F0-9]+\s*=\s*\d+\s*\)\s*\([A-F0-9]+\s*=\s*(\d{10})#g) {
+    my ($url, $host_port, $uts) = ($1, $2, $3);
+
+    ## skip old urls & ones that point at the server port
+    if ((!$ts || $uts > $ts) && $host_port !~ /:$::CONFIG{PORT}$/) {
+      push(@urls, { url => $url, mtime => $uts });
+    }
+  }
+
+  return unless @urls;
+
+  debug(">> Indexing: ", scalar @urls, " urls from history");
+
+  my $pm = Parallel::ForkManager->new($opt{p});
+  $pm->run_on_finish(sub {
+    my ($pid, $code, $i) = @_;
+    return if $code;
+
+    open(my $t, '<', "tmp/$i") 
+      || die "got good code for $i but open failed: $!\n";
+    my $type = <$t>;
+    chomp($type);
+    my $data = join('', <$t>);
+    close($t);
+    unlink("tmp/$i");
+
+    emitDoc(
+      document     => \$data, 
+      content_type => $type, 
+      name         => $urls[$i]{url},
+      mtime        => $urls[$i]{mtime},
+      fh	   => $fh,
+    );
+  });
+
+  for (my $i = 0; $i < @urls; $i++) {
+    ## parallelize
+    $pm->start($i) && next;
+
+    my $ua = LWP::UserAgent->new(
+      max_size => 1024 * 1024,
+      timeout  => 30,
+    );
+
+    my $res;
+    { local $^W = 0; $res = $ua->get($urls[$i]{url}); }
+
+    my $code = 1;
+    if ($res->is_success && length($res->content)) {
+      open(my $t, '>', "tmp/$i");
+      print $t ($res->header('Content-type'), "\n", $res->content);
+      close($t);
+      $code = 0;
+    }
+
+    $pm->finish($code);
+  }
+
+  $pm->wait_all_children;
+
+  debug('finished in ', time() - $start, ' seconds');
+}
+
+sub indexDirs {
+  my ($ts, $fh) = @_;
+
+  my $start = time();
+
+  my @dirs;
+  for my $d (@{$::CONFIG{SEARCH_DIRS}}) {
+    $d = (getpwuid($<))[7] if $d eq '$HOME';
+    push(@dirs, $d);
+  }
+  debug(">> Indexing: ", join(', ', @dirs));
+
+  my $mt = new MIME::Types;
+  $mt->addType(MIME::Type->new(extensions => ['rdf'], type => 'text/xml'));
+
+  find(sub {
+    ## skip non-files and the web history file
+    return if !-f || 
+      ($::CONFIG{WEB_HISTORY} && $File::Find::name eq $::CONFIG{WEB_HISTORY});
+
+    my $fts = (stat($_))[9];
+    return if ($ts && $fts <= $ts) || $_ !~ /^($::CONFIG{FILES_MATCH})$/o;
+
+    emitDoc(
+      document     => $File::Find::name,
+      content_type => ($mt->mimeTypeOf($_) || return)->type,
+      mtime        => $fts,
+      fh           => $fh,
+    );
+  }, @dirs);
+
+  debug('finished in ', time() - $start, ' seconds');
+}
+
+sub debug {
+  print STDERR (join('', @_), "\n") if $opt{v};
+}

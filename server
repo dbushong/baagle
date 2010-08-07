@@ -1,0 +1,636 @@
+#!/usr/bin/perl -w
+#
+# server - simple perl webserver for use by Baagle Desktop Search
+#
+
+BEGIN { 
+  use File::Basename;
+  chdir(dirname($0));
+}
+
+use strict;
+use warnings;
+use CGI;
+use URI::Escape;
+use IO::Handle;
+use Tie::IxHash;
+use Time::Local;
+use MIME::Types;
+use Getopt::Std;
+use Data::Dumper;
+use HTTP::Status;
+use POSIX 'strftime';
+use POE::Component::Server::HTTPServer;
+use POE::Component::Server::HTTPServer::Handler qw(H_CONT H_FINAL);
+use DirectorySearch;
+
+##
+## Arguments
+##
+
+our %opt;
+getopts('hvfp:', \%opt);
+die <<EOF if $opt{h} || @ARGV;
+usage: $0 [-v] [-f] [-p port]
+       -v: verbose (doesn't do anything yet)
+       -f: run in foreground instead of daemonizing on startup under UNIX
+	   logs will also be written to stdout instead of $::CONFIG{ACCESS_LOG}
+       -p: override the configured listener port ($::CONFIG{PORT})
+EOF
+
+##
+## Variables
+##
+
+my $REQ_IP;
+my $LOG;
+my $WINDOWS = ($^O eq 'MSWin32');
+my $PORT = $opt{p} || $::CONFIG{PORT};
+my $SERVER = "Floating Sheep Directory Search/$DirectorySearch::VERSION";
+my %ICON_MAP = (
+  'text/plain'		      	  => 'txt',
+  'text/rtf'		      	  => 'txt',
+  'text/html'   	      	  => 'html',
+  'application/msword'	      	  => 'doc',
+  'application/vnd.ms-excel'  	  => 'xls',
+  'application/pdf'	      	  => 'pdf',
+  'application/vnd.ms-powerpoint' => 'ppt',
+  'application/octet-stream'	  => 'file',
+);
+my $MT = MIME::Types->new(only_complete => 1);
+my $IMG_HANDLER  = new_handler('StaticHandler', './images');
+my $AUTH_REALM   = 'Baagle';
+my $AUTH_HANDLER = new_handler('BasicAuthenHandler', $AUTH_REALM);
+my $TMPL_HANDLER = new_handler('TemplateHandler', './templates', 
+                               index_file => 'home.html');
+
+##
+## Default Daemonization
+##
+
+unless ($WINDOWS || $opt{f}) {
+  my $pid = fork();
+  if ($pid) {
+    print "$0: running daemon pid $pid\n";
+    exit;
+  }
+  close(STDIN);
+  close(STDOUT);
+  close(STDERR);
+}
+
+if ($opt{f} || !exists $::CONFIG{ACCESS_LOG}) {
+  $::CONFIG{ACCESS_LOG} = '/dev/stdout';
+}
+
+##
+## Main Server Dispatch Loop
+##
+
+
+my $httpd;
+$httpd = POE::Component::Server::HTTPServer->new(
+  port     => $PORT,
+  log_file => $::CONFIG{ACCESS_LOG},
+
+  handlers => [ 
+    '/quit'	   => sub { close($httpd->{_log_fh}); exit 0; },
+    '/'            => \&prepAll,
+    '/images/'     => \&showImage,
+    '/files/'      => \&showFile,
+    '/about.html'  => \&prepAbout,
+    '/status.html' => \&prepStatus,
+    '/search.html' => \&doSearch,
+    '/'            => $TMPL_HANDLER,
+  ],
+);
+$httpd->create_server;
+POE::Kernel->run;
+
+##
+## Dispatch Functions
+##
+
+sub showImage($) {
+  my $ctx = shift;
+
+  if ($ctx->{request}->header('If-Modified-Since')) {
+    $ctx->{response}->code(RC_NOT_MODIFIED);
+  } else {
+    $IMG_HANDLER->handle($ctx);
+    $ctx->{response}->header('Last-Modified' => 
+      strftime('%a, %d, %b, %Y %T GMT', 
+	gmtime(modTime("images/$ctx->{contextpath}"))));
+  }
+
+  H_FINAL;
+}
+
+## this just does more than the simplistic StaticHandler
+sub showFile($) {
+  my $ctx = shift;
+  my ($req, $res) = ($ctx->{request}, $ctx->{response});
+
+  my $p = uri_unescape($req->uri->path);
+  $p =~ s#^/files##;
+  $p = substr($p, 1) if $WINDOWS;
+
+  if (-f $p) {
+    my $t = contentType($p);
+
+    ## if we have an opener program
+    if (my $o = $::CONFIG{OPENERS}{$t}) {
+      $p =~ s/"/\\"/g;
+      $o = sprintf(($WINDOWS ? $o : "$o >/dev/null 2>&1 &"), $p);
+      system($o);
+
+      return redirect($ctx, $req->referrer);
+    } else {
+      ## won't use show lest the files are large
+      open(my $in, '<', $p);
+      binmode($in);
+      $res->add_content($_) while <$in>;
+      close($in);
+
+      $res->content_type(contentType($p));
+    }
+
+    $res->code(RC_OK);
+    return H_FINAL;
+  }
+
+  statusCodePage($ctx, RC_NOT_FOUND);
+}
+
+sub prepAll($) {
+  my ($ctx) = @_;
+  my ($req, $res) = ($ctx->{request}, $ctx->{response});
+
+  $ctx->{year}   = (localtime)[5] + 1900;
+  $ctx->{server} = $SERVER;
+  $ctx->{port}   = $PORT;
+
+  ## Phase 1: check for IP access
+  if ($ctx->{remote_ip} !~ /$::CONFIG{ALLOWED_IPS}/o) {
+    return statusCodePage($ctx, RC_FORBIDDEN);
+  }
+
+  ## Phase 2: check for username/password
+  if ($::CONFIG{SERVER_AUTH}) {
+    my $rv = $AUTH_HANDLER->handle($ctx);
+    return H_FINAL if $rv == H_FINAL;
+
+    unless ($ctx->{basic_username} eq $::CONFIG{SERVER_AUTH}{username} &&
+            $ctx->{basic_password} eq $::CONFIG{SERVER_AUTH}{password}) {
+      return $AUTH_HANDLER->authen_challenge($ctx, $AUTH_REALM);
+    }
+  }
+
+  H_CONT;
+}
+
+sub prepAbout($) {
+  my $ctx = shift;
+
+  open(my $rm, '<', 'README');
+  my $r = join('', <$rm>);
+  close($rm);
+
+  $ctx->{readme} = h($r);
+
+  H_CONT;
+}
+
+sub prepStatus($) {
+  my $ctx = shift;
+
+  my $fmt = $WINDOWS ? '%c' : '%l:%M%p on %a, %b %e %Y';
+
+  if (my @f = indexFiles()) {
+    my %h;
+    runSwish('-w ""', '-H', 2, '-f', indexFiles());
+    while (<SW>) {
+      if (/^# ([^:]+):\s+(.+)/) {
+	my ($key, $val) = ($1, $2);
+	if ($val =~ /^\d+$/) {
+	  $h{$key} += $val;
+	} else {
+	  $h{$key} = $val;
+	}
+      }
+    }
+    close(SW);
+
+    $ctx->{date}  = strftime($fmt, localtime(swishDate($h{'Indexed on'})));
+    $ctx->{words} = addCommas($h{'Total Words'});
+    $ctx->{files} = addCommas($h{'Total Files'});
+  } elsif (my $t = modTime('index.full.temp')) {
+    $ctx->{date}    = strftime($fmt, localtime($t));
+    $ctx->{running} = ($t > (time() - 60)) 
+	      && duration($t - modTime('tmp/index.timestamp'));
+  }
+
+  #$ctx->{config} = h(Data::Dumper->new([\%::CONFIG], ['*::CONFIG']
+    #)->Indent(1)->Quotekeys(0)->Dump);
+  $ctx->{config} = dumpHTML(\%::CONFIG);
+
+  H_CONT;
+}
+
+sub doSearch($) {
+  my $ctx = shift;
+
+  ## check that the index files exist
+  return redirect($ctx, '/status.html') unless indexFiles();
+
+  ## handle request variables
+  my $q = CGI->new($ctx->{request}->uri->query);
+  my $w = $q->param('q');
+  my $p = $q->param('p') || 1;
+  my $r = $q->param('r');
+
+  my @pages;
+  my @results;
+  my $search = {};
+  my $start = ($p-1)*10+1;
+
+  ## convert generic search results into template params
+  if (length($w) && ($search = swishSearch($w, $start, 10, $r)) && %$search) {
+    @results = map { {
+      path  => breakupPath(boldWords($_->{path}, $w)),
+      link  => linkTo($_->{path}),
+      title => boldWords($_->{title}, $w),
+      descr => boldWords(makeBlurb($_->{descr}, $w), $w),
+      size  => dataSize($_->{size}),
+      icon  => $ICON_MAP{contentType($_->{path}, 1)},
+      date  => makeDate($_->{lastmod}),
+    } } @{$search->{results}};
+  }
+
+  my $h = $search->{hits};
+
+  ## come up with pager links
+  my ($next, $prev);
+  if ($h > 10) {
+    my $np = ceil($h / 10);
+
+    my $s = max($p - 10, 1);
+    my $e = min($p + 9, $np);
+
+    @pages = map { 
+    $q->param('p', $_);
+    {
+      n    => $_,
+      link => ($_ == $p) ? '' : '/search.html?' . h($q->query_string),
+    } } $s..$e;
+
+    if ($p < $np) {
+      $q->param('p', $p+1);
+      $next = '/search.html?' . h($q->query_string);
+    }
+
+    if ($p > 1) {
+      $q->param('p', $p-1);
+      $prev = '/search.html?' . h($q->query_string);
+    }
+  }
+  $q->param('p', $p);
+
+  ## toggle "by relevance" and "by date" links
+  my ($by_rel, $by_date);
+  if ($r) {
+    $q->delete('r');
+    $by_date = '/search.html?' . $q->query_string;
+  } else {
+    $q->param('r', 1);
+    $by_rel = '/search.html?' . $q->query_string;
+  }
+
+  ## prep the variables
+  $ctx->{q}       = h($w);
+  $ctx->{results} = \@results;
+  $ctx->{hits}    = addCommas($search->{hits}), 
+  $ctx->{stime}   = $search->{stime};
+  $ctx->{start}   = addCommas($start);
+  $ctx->{end}     = addCommas(min($search->{hits}, $start + 9));
+  $ctx->{pages}   = \@pages;
+  $ctx->{next}    = $next;
+  $ctx->{prev}    = $prev;
+  $ctx->{by_date} = $by_date;
+  $ctx->{by_rel}  = $by_rel;
+
+  H_CONT;
+}
+
+##
+## Utility functions
+##
+
+## given a number and a noun, return plural-correct string
+## e.g.: s(0, 'foo')  => "0 foos"
+##       s(1, 'foo')  => "1 foo"
+##       s(37, 'foo') => "37 foos"
+sub plural($$) {
+  my ($n, $thing) = @_;
+  "$n $thing" . (($n == 1) ? '' : 's');
+}
+
+## given a list of items, return a comma-separated list with all the niceties
+## of "and"
+sub listToString(@) {
+  return $_[0]             if @_ == 1;
+  return "$_[0] and $_[1]" if @_ == 2;
+  join(', ', @_[0..$#_-1]) . ', and ' . $_[-1];
+}
+
+## given a number of seconds, returns a nice duration string
+## e.g. duration(5283) => "1 hour, 28 minutes, 3 seconds"
+sub duration($) { 
+  my ($t) = @_;
+
+  my %tp;
+  tie(%tp, 'Tie::IxHash',
+    year   => 364.25 * 60 * 60 * 24,
+    month  =>  30    * 60 * 60 * 24,
+    day    =>          60 * 60 * 24,
+    hour   =>          60 * 60,
+    minute =>               60,
+    second => 1,
+  );
+
+  my @r;
+
+  while (my($name, $secs) = each(%tp)) {
+    next if $t < $secs;
+    my $n = int($t / $secs);
+    $t %= $secs;
+    push(@r, plural($n, $name));
+  }
+
+  listToString(@r);
+}
+
+sub indexFiles() {
+  grep { -f } qw( index.full index.incr );
+}
+
+sub makeDate($) {
+  my ($ts) = @_;
+
+  my @now   = localtime();
+  my $today = timelocal(0, 0, 0, @now[3..5]);
+
+  my @t     = localtime($ts);
+
+  my $fmt   = $WINDOWS ? '%X' : '%l:%M%p';
+
+  return strftime("today at $fmt", @t) 
+    if $ts >= $today;
+
+  return strftime("yesterday at $fmt", @t) 
+    if $ts >= ($today - 60 * 60 * 24);
+
+  my $str = strftime(($WINDOWS ? '%x' : '%m/%e/%Y'), @t);
+  $str =~ s/^0|\s//g;
+  $str;
+}
+
+sub makeBlurb($$) {
+  my ($str, $w) = @_;
+
+  my $re = join('|', map { quotemeta } split(/\W+/, $w));
+
+  ## try to center us around a relevant bit
+  if ($str =~ /.{0,120}\b($re)\b.{0,120}/) {
+    my $m = $&;
+    $m = "...$m" unless $str =~ /^\Q$m/;
+    $str = $m;
+  } else {
+    $str = substr($str, 0, 240);
+    $str =~ s/^.*?\s(?=\S)//s while $str =~ /^[^a-z0-9]*\s(?=\S)/s;
+  }
+
+  $str .= '...' unless $str =~ /\s$/s;
+  $str;
+}
+
+sub boldWords($$) {
+  my ($d, $w) = @_;
+
+
+  $d = h($d);
+
+  ## decode entities
+  $d =~ s/&amp;(#\d+|[a-z]+);/&$1;/g;
+
+  ## convert weird swish-e binary trash (only seems to happen in the libxml
+  ## version, probably b/c it's ignoring "ConvertHTMLEntities no"
+  my %bin2html = (
+    "\xa0" => 'nbsp',
+    "\xb7" => 'bull',
+    "\xad" => 'plusmn',
+    "\xa9" => 'copy',
+    "\xe9" => 'eacute',
+  );
+  my $re = join('|', keys %bin2html);
+  $d =~ s/($re)/$bin2html{$1}/ge;
+
+  $re = join('|', map { quotemeta } split(/\W+/, $w));
+
+  $d =~ s#(^|[^a-z0-9])($re)([^a-z0-9]|$)#$1<b>$2</b>$3#sgi;
+
+  return $d;
+}
+
+sub contentType($;$) {
+  my ($file, $icon_only) = @_;
+
+  my $t;
+  $t = $t->type if $t = $MT->mimeTypeOf($file);
+  $t = undef if $icon_only && $t && !$ICON_MAP{$t};
+
+  return $t || 'text/plain';
+}
+
+sub statusCodePage($$) {
+  my ($ctx, $code) = @_;
+
+  $TMPL_HANDLER->handle_plainfile("templates/$code.html", $ctx);
+  $ctx->{response}->code($code);
+
+  H_FINAL;
+}
+
+sub dataSize($) {
+  my ($n) = @_;
+
+  return "$n bytes"            if $n < 1024;
+  $n /= 1024;
+  return sprintf('%.1fKB', $n) if $n < 1024;
+  $n /= 1024;
+  return sprintf('%.1fMB', $n) if $n < 1024;
+  return sprintf('%.1fGB', $n / 1024);
+}
+
+sub h($) {
+  my ($str) = @_;
+
+  $str =~ s/&/&amp;/g;
+  $str =~ s/</&lt;/g;
+  $str =~ s/>/&gt;/g;
+
+  return $str;
+}
+
+sub swishSearch($$$$) {
+  my ($w, $start, $n, $by_rel) = @_;
+
+  my %s;
+
+  ## include filename in searches
+  $w = "$w or filename=($w)";
+  if ($WINDOWS) {
+    $w =~ s/"/\\"/g;
+    $w = qq("$w");
+  }
+
+  ## handle sorting by date
+  my @s;
+  @s = qw( -s swishlastmodified desc ) unless $by_rel;
+
+  ## handle range
+  my @b;
+  @b = ('-b', $start) if $start > 1;
+
+  my @m;
+  @m = ('-m', $n) if $n;
+
+  ## run swish-e
+  runSwish('-w', $w, '-d', '\t', @s, @b, @m, '-f', indexFiles(),
+    '-p', 'swishlastmodified', 'swishdescription');
+  while (<SW>) {
+    chomp;
+
+    # SWISH format: 2.4.3
+    # Search words: gentle or filename=(gentle)
+    # Removed stopwords: 
+    # Removed stopwords: 
+    # Number of hits: 15
+    # Search time: 0.001 seconds
+    # Run time: 0.056 seconds
+
+    last if /^\.$|^err:/;
+    $s{stime} = $1 if /^# Search time: ([\d.]+)/;
+    $s{hits}  = $1 if /^# Number of hits: (\d+)/;
+    next if /^#/;
+
+    my %h = ();
+    @h{qw(rank path title size lastmod descr)} = split(/\t/, $_, 6);
+    $h{lastmod} = swishDate($h{lastmod});
+
+    push(@{$s{results}}, { %h }) if $h{size};
+  }
+  close(SW);
+
+  $s{hits}  ||= 0;
+  $s{stime} ||= '?';
+
+  return \%s;
+}
+
+sub swishDate($) {
+  my ($str) = @_;
+  $str =~ /^(\d{4})-(\d\d)-(\d\d)\s+(\d\d):(\d\d):(\d\d)/;
+  timelocal($6, $5, $4, $3, $2-1, $1-1900);
+}
+
+sub addCommas($) {
+  my ($n) = @_;
+  $n =~ s/(\d)(\d{3})(,|$)/$1,$2$3/ while $n =~ /\d{4}/;
+  $n;
+}
+
+sub dumpHTML {
+  my (@ds) = @_;
+  my $h = '';
+  my @c = caller(1);
+  my $top = !@c || $c[3] ne (caller(0))[3];
+  my $d = (@ds > 1) ? \@ds : $ds[0];
+  my $ref = ref $d;
+  if ($ref =~ /^(ARRAY|HASH)$/) {
+    if (my @keys = ($ref eq 'ARRAY') ? (0..$#$d) : sort(keys(%$d))) {
+      my $w = $top ? '' : ' width="100%"';
+      $h .= qq(<table class="dump"$w>);
+      for my $k (@keys) {
+        my $v = ($ref eq 'ARRAY') ? $d->[$k] : $d->{$k};
+	my $kh = h($k);
+	my $vh = dumpHTML($v);
+	$h .= <<EOF;
+ <tr>
+  <th class="dump$ref">$kh</th>
+  <td class="dump"$w>$vh</td>
+ </tr>
+EOF
+      }
+      $h .= '</table>';
+    } else {
+      $h .= '<i>empty ' . lc($ref) . '</i>&nbsp;';
+    }
+  } elsif ($ref) {
+    $h .= "<i>unhandled reference type $ref</i>&nbsp;";
+  } elsif (length($d)) {
+    $h .= h($d);
+  } elsif (defined($d)) {
+    $h .= "<i>empty string</i>&nbsp;";
+  } else {
+    $h .= "<i>undef</i>&nbsp;";
+  }
+  if ($top) {
+    $h .= <<'EOF';
+<table class="dump" style="margin-top: 5px; font-size: 8pt;">
+ <tr>
+  <th class="dumpARRAY" align="center">array</th>
+  <th class="dumpHASH" align="center">hash</th>
+  <th align="center">scalar</th>
+ </tr>
+</table>
+EOF
+  }
+  return $h;
+}
+
+## runs swish-e with supplied arguments, opening filehandle SW
+sub runSwish(@) {
+  my $sw = $::CONFIG{SWISH_E};
+  if ($WINDOWS) {
+    my $cmd = join(' ', qq("$sw"), @_);
+    open(SW, "$cmd|");
+  } else {
+    open(SW, '-|', $sw, @_);
+  }
+}
+
+sub linkTo($) {
+  my ($path) = @_;
+  $path =~ m#^http://# ? $_->{path} : filesLink($_->{path});
+}
+
+sub filesLink($) {
+  my ($path) = @_;
+  h($WINDOWS ? "/files/$path" : "/files$path");
+}
+
+sub breakupPath($) {
+  my ($path) = @_;
+  $path =~ s#&#<wbr/>&#g;
+  $path;
+}
+
+sub redirect($$) {
+  my ($ctx, $path) = @_;
+
+  $ctx->{response}->code(RC_FOUND);
+  $ctx->{response}->header('Location', $path);
+
+  H_FINAL;
+}

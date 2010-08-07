@@ -1,0 +1,17 @@
+12/27/2005: Version 2.0
+  General:
+    * YML-based configuration file
+  Indexer:
+    * No longer regenerates the swish-e.conf
+    * "-S prog" based dynamic index content generation
+    * uses SWISH::Filter system instead of configured converters
+    * Indexes web history URLs
+    * Use Snowball stemming by default
+  Server:
+    * Now uses POE::Component::Server::HTTPServer instead of 
+	       POE::Component::Server::HTTP (oh, boy!)
+    * Logs accesses
+    * More flexible IP restrictions
+    * Username/Password authentication
+
+12/12/2004: Version 1.0

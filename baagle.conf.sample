@@ -1,0 +1,74 @@
+###############################################################
+##                                                           ##
+## Floating Sheep Directory Search Master Configuration File ##
+##                                                           ##
+## -- this file is in YAML format --                         ##
+##                                                           ##
+###############################################################
+
+##
+## location of the swish-e binary
+##
+SWISH_E: /usr/local/bin/swish-e
+
+##
+## directory containing Swish-related perl modules (e.g. SWISH/Filter.pm)
+##
+SWISH_PERL_LIB: /usr/local/lib/swish-e/perl
+
+##
+## directories to index; $HOME will be replaced with the user's home directory
+##
+SEARCH_DIRS:
+  - $HOME
+# - /some/other/dir
+# - /and/another
+
+##
+## whether to index your web history (and where to find it)
+##
+#WEB_HISTORY: /home/dir/.mozilla/firefox/0m8stx9w.default/history.dat
+
+##
+## which port should the local webserver listen on?  default is 2986.
+##
+PORT: 2986
+
+##
+## perl regexp specifying what file names to index, will be used like:
+## /^($FILES_MATCH)$/
+##
+FILES_MATCH: ChangeLog|README|INSTALL|(?i:.+\.(doc|xls|ps|pdf|html?|[msx]html|php\d?|txt|rss|rdf|[hp]|cc?|p[ml]|(c|ba)?sh|pod|py|rb|csv|css|awk|bat|patch|jsp|aspx?|x[ms]l|rtf|mp3))
+
+##
+## programs you'd like to open given extensions instead of your browser
+##
+#OPENERS:
+  ## plausible UNIX ones:
+  #"application/x-msword": /usr/X11R6/bin/openoffice.org "%s"
+  #"text/html":            /usr/X11R6/bin/firefox -remote "openFile(%s)"
+  #"audio/mpeg":           /usr/X11R6/bin/xmms "%s"
+
+  ## plausible Windows ones:
+  #"application/vnd.ms-excel": C:\Program Files\Microsoft Office\Microsoft Excel "%s"
+  #"text/html":                browsercall "%s"
+
+##
+## restrict access to IPs matching the given regexp, will be used like:
+## /^($ALLOWED_IPS)$/
+##
+#ALLOWED_IPS: .+
+#ALLOWED_IPS: 127\.0\.0\.1|10\.4\.2\.\d+
+ALLOWED_IPS: 127\.0\.0\.1
+
+##
+## set to require a password for access to the server
+##
+#SERVER_AUTH:
+#  username: sheepare
+#  password: fluffy
+
+##
+## where to log server accesses
+##
+ACCESS_LOG: tmp/access_log

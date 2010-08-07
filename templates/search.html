@@ -1,0 +1,132 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.0 Transitional//EN">
+<html>
+<head>
+  <title>Baagle Desktop Search Results</title>
+  <meta http-equiv="content-type" content="text/html; charset=UTF-8"/>
+  <meta http-equiv="cache-control" content="no-cache"/>
+  <meta http-equiv="Pragma" content="no-cache"/>
+  <meta http-equiv="Expires" content="-1"/>
+  <link rel="stylesheet" type="text/css" href="/images/standard.css"/>
+</head>
+
+<body>
+
+<table border="0" cellpadding="0" cellspacing="0">
+  <tr>
+    <td><a href="/"><img src="/images/logo-75.png" width="128" height="48" 
+	alt="Baagle Desktop Search" border="0" class="medlogo"/></a></td>
+    <td>
+      <form name="gs" method="get" action="/search.html">
+	<input type="text" name="q" size="42" maxlength="256" value="<tmpl_var q>" accesskey="s"/>
+	<input type="submit" value="Search Desktop" class="button"/>
+      </form>
+    </td>
+  </tr>
+</table>
+
+<h1>
+<tmpl_if results>
+<div class="resultInfo">
+  <b><tmpl_var start></b>-<b><tmpl_var end></b> of <b><tmpl_var hits></b>
+  (<b><tmpl_var stime></b>s)
+</div>
+</tmpl_if>
+Desktop
+</h1>
+
+<div style="text-align:right">&nbsp;
+<tmpl_if results>
+<tmpl_if by_rel>
+  <a href="<tmpl_var by_rel>">Sort by relevance</a>
+<tmpl_else>
+  <b>Sorted by relevance</b>
+</tmpl_if>
+  &nbsp;&bull;&nbsp;
+<tmpl_if by_date>
+  <a href="<tmpl_var by_date>">Sort by date</a>
+<tmpl_else>
+  <b>Sorted by date</b>
+</tmpl_if>
+</tmpl_if>
+</div>
+             
+<tmpl_if results>
+<table border="0" cellpadding="0" cellspacing="0">
+<tmpl_loop results>
+  <tr>
+    <td valign="top">
+      <img src="/images/<tmpl_var icon>.png" width="16" height="16"
+	border="0" class="icon"/>
+    </td>
+    <td>
+      <a href="<tmpl_var link>"><tmpl_var title></a><br/>
+      <tmpl_var descr><br>
+      <span class="path"><tmpl_var path></span>
+	&nbsp;-&nbsp;
+      <tmpl_var size>
+	&nbsp;-&nbsp;
+      <tmpl_var date>
+    </td>
+  </tr>
+  <tr><td>&nbsp;</td></tr>
+</tmpl_loop>
+</table>
+<tmpl_else>
+Your search - <b><tmpl_var q></b> - did not match any items.
+<br/><br/>
+Suggestions:
+<blockquote>
+- Make sure all words are spelled correctly.<br/>
+- Try more general keywords.<br/>
+- Try different keywords.<br/>
+- Try fewer keywords.<br/>
+</blockquote>
+</tmpl_if>
+
+<tmpl_if pages>
+<br>
+<table border="0" cellpadding="0" cellspacing="0" align="center">
+  <tr>
+    <td>Result page: &nbsp;&nbsp;</td>
+<tmpl_if prev>
+    <td><a href="<tmpl_var prev>" class="pgNum"><b>&laquo; Previous</b></a></td>
+</tmpl_if>
+<tmpl_loop pages>
+    <td>
+<tmpl_if link>
+      <a href="<tmpl_var link>" class="pgNum"><tmpl_var n></a>
+<tmpl_else>
+      <b class="pgNum"><tmpl_var n></b>
+</tmpl_if>
+    </td>
+</tmpl_loop>
+<tmpl_if next>
+    <td><a href="<tmpl_var next>" class="pgNum"><b>Next &raquo;</b></a></td>
+</tmpl_if>
+</table>
+</tmpl_if>
+
+<br/>
+<form action="/search.html" method="get">
+<div class="searchBar">
+  <input type="text" name="q" size="42" maxlength="256" value="<tmpl_var q>"/>
+  <input type="submit" value="Search Desktop" class="button"/>
+</div>
+</form>
+
+<div class="footer">
+  <a href="/">Baagle Home</a>
+  &nbsp;&bull;&nbsp;
+  <a href="/about.html">About</a>
+  &nbsp;&bull;&nbsp;
+  <a href="/status.html">Status</a>
+  &nbsp;&bull;&nbsp;
+  &copy; 2004 - <tmpl_var year>
+  <a href="http://www.floatingsheep.com/">
+  <img src="/images/fss-logo-sm.png" width="114" height="21"
+    title="Floating Sheep Studios" alt="Floating Sheep Studios"
+    border="0" class="smlogo"/></a>
+</div>
+
+</body>
+</html>
