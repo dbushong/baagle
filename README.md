@@ -1,6 +1,14 @@
 Baagle Desktop Search v2.0
 ==========================
 
+Background
+----------
+
+I write this on a dare in 2004 after the release of Google Desktop Search when
+I said "one could write something like that in 2 days" and a friend said "no
+you can't", so hey.  Is it good for much these days?  Probably not.  But I
+shall let Github judge!
+
 Description
 -----------
 
