@@ -92,8 +92,8 @@ Installation
 3. (Optionally) put entries in your crontab to rerun indexer whenever you'd
    like; I'd suggest something like this:
 
-   42 */2 * * * /path/to/this/dir/indexer >/dev/null 2>&1
-   12   2 * * 0 /path/to/this/dir/indexer -F >/dev/null 2>&1
+    42 */2 * * * /path/to/this/dir/indexer >/dev/null 2>&1
+    12   2 * * 0 /path/to/this/dir/indexer -F >/dev/null 2>&1
    
    That will run an incremental index (very fast) once every other hour, and
    a full index once a week.  If you have frequent changes to a small set of
